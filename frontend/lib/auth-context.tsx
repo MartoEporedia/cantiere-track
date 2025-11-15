@@ -17,15 +17,18 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     // Check if user is already logged in
-    const token = localStorage.getItem('access_token');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
     if (token) {
+      setIsAuthenticated(true);
       // TODO: Validate token by calling API
       setIsLoading(false);
     } else {
+      setIsAuthenticated(false);
       setIsLoading(false);
     }
   }, []);
@@ -33,7 +36,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (username: string, password: string) => {
     try {
       const data = await apiLogin(username, password);
-      localStorage.setItem('access_token', data.access_token);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('access_token', data.access_token);
+      }
+      setIsAuthenticated(true);
       // TODO: Fetch user data
       router.push('/dashboard');
     } catch (error) {
@@ -43,7 +49,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
-    localStorage.removeItem('access_token');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('access_token');
+    }
+    setIsAuthenticated(false);
     setUser(null);
     router.push('/login');
   };
@@ -52,7 +61,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!localStorage.getItem('access_token'),
+        isAuthenticated,
         isLoading,
         login,
         logout,
