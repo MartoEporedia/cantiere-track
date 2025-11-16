@@ -57,6 +57,7 @@ async def employee_report(
     total_hours = 0
     sites_visited = set()
     attendance_list = []
+    hours_by_site = {}  # Aggregate hours by site
 
     for att in attendances:
         hours = calculate_hours(att.timestamp_in, att.timestamp_out)
@@ -68,6 +69,13 @@ async def employee_report(
         # Get site info
         site = db.query(Site).filter(Site.id == att.site_id).first()
 
+        # Aggregate hours by site
+        if site and att.timestamp_out:
+            site_name = site.name
+            if site_name not in hours_by_site:
+                hours_by_site[site_name] = 0
+            hours_by_site[site_name] += hours
+
         attendance_list.append({
             "id": att.id,
             "site_name": site.name if site else "Unknown",
@@ -77,6 +85,12 @@ async def employee_report(
             "hours_worked": hours if att.timestamp_out else None,
             "status": "completed" if att.timestamp_out else "in_progress"
         })
+
+    # Convert hours_by_site to list format and round values
+    site_aggregation = [
+        {"site": site_name, "hours": round(hours, 2)}
+        for site_name, hours in sorted(hours_by_site.items(), key=lambda x: x[1], reverse=True)
+    ]
 
     return {
         "employee": {
@@ -91,6 +105,7 @@ async def employee_report(
             "total_attendances": len(attendances),
             "sites_visited": len(sites_visited)
         },
+        "site_aggregation": site_aggregation,
         "attendances": attendance_list
     }
 
@@ -124,6 +139,7 @@ async def site_report(
     total_hours = 0
     employees_present = set()
     attendance_list = []
+    hours_by_role = {}  # Aggregate hours by role
 
     for att in attendances:
         hours = calculate_hours(att.timestamp_in, att.timestamp_out)
@@ -135,6 +151,13 @@ async def site_report(
         # Get employee info
         employee = db.query(Employee).filter(Employee.id == att.employee_id).first()
 
+        # Aggregate hours by role
+        if employee and att.timestamp_out:
+            role = employee.role or "Unknown"
+            if role not in hours_by_role:
+                hours_by_role[role] = 0
+            hours_by_role[role] += hours
+
         attendance_list.append({
             "id": att.id,
             "employee_name": f"{employee.name} {employee.surname}" if employee else "Unknown",
@@ -145,6 +168,12 @@ async def site_report(
             "hours_worked": hours if att.timestamp_out else None,
             "status": "completed" if att.timestamp_out else "in_progress"
         })
+
+    # Convert hours_by_role to list format and round values
+    role_aggregation = [
+        {"role": role, "hours": round(hours, 2)}
+        for role, hours in sorted(hours_by_role.items(), key=lambda x: x[1], reverse=True)
+    ]
 
     return {
         "site": {
@@ -158,6 +187,7 @@ async def site_report(
             "total_attendances": len(attendances),
             "unique_employees": len(employees_present)
         },
+        "role_aggregation": role_aggregation,
         "attendances": attendance_list
     }
 
