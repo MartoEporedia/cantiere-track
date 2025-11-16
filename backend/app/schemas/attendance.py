@@ -1,7 +1,7 @@
 """
 Attendance schemas
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -18,6 +18,14 @@ class AttendanceCreate(AttendanceBase):
     timestamp_out: Optional[datetime] = None
     notes: Optional[str] = None
 
+    @field_validator('notes')
+    @classmethod
+    def empty_string_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None"""
+        if v is not None and v.strip() == '':
+            return None
+        return v
+
 
 class AttendanceClockIn(BaseModel):
     """Schema for clock-in"""
@@ -25,10 +33,26 @@ class AttendanceClockIn(BaseModel):
     site_id: int = Field(..., gt=0)
     notes: Optional[str] = None
 
+    @field_validator('notes')
+    @classmethod
+    def empty_string_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None"""
+        if v is not None and v.strip() == '':
+            return None
+        return v
+
 
 class AttendanceClockOut(BaseModel):
     """Schema for clock-out"""
     notes: Optional[str] = None
+
+    @field_validator('notes')
+    @classmethod
+    def empty_string_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None"""
+        if v is not None and v.strip() == '':
+            return None
+        return v
 
 
 class AttendanceUpdate(BaseModel):
@@ -36,6 +60,14 @@ class AttendanceUpdate(BaseModel):
     timestamp_in: Optional[datetime] = None
     timestamp_out: Optional[datetime] = None
     notes: Optional[str] = None
+
+    @field_validator('notes')
+    @classmethod
+    def empty_string_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None"""
+        if v is not None and v.strip() == '':
+            return None
+        return v
 
 
 class EmployeeInfo(BaseModel):

@@ -1,7 +1,7 @@
 """
 Attendance tracking model
 """
-from sqlalchemy import Column, Integer, ForeignKey, DateTime, Index, func as sql_func
+from sqlalchemy import Column, Integer, ForeignKey, DateTime, Index, Text, func as sql_func
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..core.database import Base
@@ -16,7 +16,7 @@ class Attendance(Base):
     site_id = Column(Integer, ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp_in = Column(DateTime(timezone=True), nullable=False, index=True)
     timestamp_out = Column(DateTime(timezone=True), nullable=True, index=True)
-    notes = Column(Integer)  # Optional notes about the attendance
+    notes = Column(Text, nullable=True)  # Optional notes about the attendance
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
