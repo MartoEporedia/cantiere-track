@@ -9,6 +9,7 @@ import {
   clockIn,
   clockOut,
   getActiveAttendance,
+  createAttendance,
   Attendance,
   Employee,
   Site,
@@ -20,8 +21,11 @@ export default function AttendancePage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showClockInModal, setShowClockInModal] = useState(false);
+  const [showAddHoursModal, setShowAddHoursModal] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<number | null>(null);
   const [selectedSite, setSelectedSite] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [hoursWorked, setHoursWorked] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -76,6 +80,44 @@ export default function AttendancePage() {
     }
   };
 
+  const handleAddHours = async () => {
+    if (!selectedEmployee || !selectedSite || !hoursWorked) {
+      alert('Please select an employee, a site, and enter hours worked');
+      return;
+    }
+
+    const hours = parseFloat(hoursWorked);
+    if (isNaN(hours) || hours <= 0) {
+      alert('Please enter a valid number of hours');
+      return;
+    }
+
+    try {
+      // Create timestamps based on selected date and hours
+      // Start at 8:00 AM on selected date
+      const startDate = new Date(selectedDate + 'T08:00:00');
+      const endDate = new Date(startDate.getTime() + hours * 60 * 60 * 1000);
+
+      await createAttendance({
+        employee_id: selectedEmployee,
+        site_id: selectedSite,
+        timestamp_in: startDate.toISOString(),
+        timestamp_out: endDate.toISOString(),
+        notes,
+      });
+
+      setShowAddHoursModal(false);
+      setSelectedEmployee(null);
+      setSelectedSite(null);
+      setSelectedDate(format(new Date(), 'yyyy-MM-dd'));
+      setHoursWorked('');
+      setNotes('');
+      fetchData();
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to add hours');
+    }
+  };
+
   const calculateHours = (timestampIn: string, timestampOut?: string) => {
     const start = new Date(timestampIn);
     const end = timestampOut ? new Date(timestampOut) : new Date();
@@ -97,9 +139,14 @@ export default function AttendancePage() {
           </p>
         </div>
         <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
-          <button onClick={() => setShowClockInModal(true)} className="btn-primary">
-            Clock In
-          </button>
+          <div className="flex gap-3">
+            <button onClick={() => setShowAddHoursModal(true)} className="btn-primary">
+              Add Hours
+            </button>
+            <button onClick={() => setShowClockInModal(true)} className="btn-secondary">
+              Clock In
+            </button>
+          </div>
         </div>
       </div>
 
@@ -212,6 +259,99 @@ export default function AttendancePage() {
           </div>
         </div>
       </div>
+
+      {/* Add Hours Modal */}
+      {showAddHoursModal && (
+        <div className="fixed z-10 inset-0 overflow-y-auto">
+          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={() => setShowAddHoursModal(false)}
+            ></div>
+
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">Add Hours Worked</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Employee</label>
+                    <select
+                      className="input-field mt-1"
+                      value={selectedEmployee || ''}
+                      onChange={(e) => setSelectedEmployee(Number(e.target.value))}
+                    >
+                      <option value="">Select an employee</option>
+                      {employees.map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.name} {emp.surname} - {emp.badge_code}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Site</label>
+                    <select
+                      className="input-field mt-1"
+                      value={selectedSite || ''}
+                      onChange={(e) => setSelectedSite(Number(e.target.value))}
+                    >
+                      <option value="">Select a site</option>
+                      {sites.map((site) => (
+                        <option key={site.id} value={site.id}>
+                          {site.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Date</label>
+                    <input
+                      type="date"
+                      className="input-field mt-1"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Hours Worked</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="24"
+                      className="input-field mt-1"
+                      value={hoursWorked}
+                      onChange={(e) => setHoursWorked(e.target.value)}
+                      placeholder="e.g., 8"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Notes (Optional)</label>
+                    <textarea
+                      className="input-field mt-1"
+                      rows={3}
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button onClick={handleAddHours} className="btn-primary ml-3">
+                  Add Hours
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddHoursModal(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clock In Modal */}
       {showClockInModal && (
