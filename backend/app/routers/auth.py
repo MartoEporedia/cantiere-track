@@ -1,22 +1,31 @@
 """
 Authentication router
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from ..core.database import get_db
 from ..core.security import verify_password, get_password_hash, create_access_token
 from ..core.config import settings
+from ..core.audit import log_action, AuditAction
 from ..models.user import User
 from ..schemas.user import UserCreate, User as UserSchema, Token
 
 router = APIRouter()
 
+# Import limiter from main (will be available via request.app.state)
+def get_limiter(request: Request):
+    return request.app.state.limiter
+
 
 @router.post("/register", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    """Register a new user"""
+async def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+    """Register a new user (Rate limited to prevent abuse)"""
+    # Apply rate limiting
+    limiter = get_limiter(request)
+    await limiter.limit(settings.REGISTER_RATE_LIMIT)(request)
+
     # Check if username exists
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
@@ -40,20 +49,35 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         email=user_data.email,
         full_name=user_data.full_name,
         hashed_password=hashed_password,
+        role=user_data.role,  # Set role from registration data (default: VIEWER)
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
+    # Log registration
+    log_action(
+        db=db,
+        action=AuditAction.REGISTER,
+        user=db_user,
+        details={"username": db_user.username, "role": db_user.role.value},
+        request=request
+    )
 
     return db_user
 
 
 @router.post("/login", response_model=Token)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """Login and get access token"""
+    """Login and get access token (Rate limited to prevent brute force)"""
+    # Apply rate limiting
+    limiter = get_limiter(request)
+    await limiter.limit(settings.LOGIN_RATE_LIMIT)(request)
+
     # Find user by username
     user = db.query(User).filter(User.username == form_data.username).first()
 
@@ -77,6 +101,15 @@ async def login(
     access_token = create_access_token(
         data={"sub": user.username},
         expires_delta=access_token_expires
+    )
+
+    # Log successful login
+    log_action(
+        db=db,
+        action=AuditAction.LOGIN,
+        user=user,
+        details={"username": user.username},
+        request=request
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
