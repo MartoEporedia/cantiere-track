@@ -3,7 +3,7 @@ Reporting router for attendance analysis
 """
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 from typing import Optional
 from datetime import datetime, date
@@ -42,8 +42,10 @@ async def employee_report(
     if not employee:
         return {"error": "Employee not found"}
 
-    # Build query
-    query = db.query(Attendance).filter(Attendance.employee_id == employee_id)
+    # Build query with eager loading to prevent N+1 queries
+    query = db.query(Attendance).filter(Attendance.employee_id == employee_id).options(
+        joinedload(Attendance.site)
+    )
 
     # Filter by date range
     if date_from:
@@ -66,8 +68,8 @@ async def employee_report(
 
         sites_visited.add(att.site_id)
 
-        # Get site info
-        site = db.query(Site).filter(Site.id == att.site_id).first()
+        # Site info is already loaded via eager loading
+        site = att.site
 
         # Aggregate hours by site
         if site and att.timestamp_out:
@@ -124,8 +126,10 @@ async def site_report(
     if not site:
         return {"error": "Site not found"}
 
-    # Build query
-    query = db.query(Attendance).filter(Attendance.site_id == site_id)
+    # Build query with eager loading to prevent N+1 queries
+    query = db.query(Attendance).filter(Attendance.site_id == site_id).options(
+        joinedload(Attendance.employee)
+    )
 
     # Filter by date range
     if date_from:
@@ -148,8 +152,8 @@ async def site_report(
 
         employees_present.add(att.employee_id)
 
-        # Get employee info
-        employee = db.query(Employee).filter(Employee.id == att.employee_id).first()
+        # Employee info is already loaded via eager loading
+        employee = att.employee
 
         # Aggregate hours by role
         if employee and att.timestamp_out:
@@ -206,8 +210,10 @@ async def employee_report_csv(
     if not employee:
         return Response(content="Employee not found", status_code=404)
 
-    # Build query
-    query = db.query(Attendance).filter(Attendance.employee_id == employee_id)
+    # Build query with eager loading to prevent N+1 queries
+    query = db.query(Attendance).filter(Attendance.employee_id == employee_id).options(
+        joinedload(Attendance.site)
+    )
 
     if date_from:
         query = query.filter(Attendance.timestamp_in >= datetime.combine(date_from, datetime.min.time()))
@@ -235,7 +241,7 @@ async def employee_report_csv(
 
     # Write data
     for att in attendances:
-        site = db.query(Site).filter(Site.id == att.site_id).first()
+        site = att.site  # Already loaded via eager loading
         hours = calculate_hours(att.timestamp_in, att.timestamp_out) if att.timestamp_out else ""
 
         writer.writerow([
@@ -275,8 +281,10 @@ async def site_report_csv(
     if not site:
         return Response(content="Site not found", status_code=404)
 
-    # Build query
-    query = db.query(Attendance).filter(Attendance.site_id == site_id)
+    # Build query with eager loading to prevent N+1 queries
+    query = db.query(Attendance).filter(Attendance.site_id == site_id).options(
+        joinedload(Attendance.employee)
+    )
 
     if date_from:
         query = query.filter(Attendance.timestamp_in >= datetime.combine(date_from, datetime.min.time()))
@@ -304,7 +312,7 @@ async def site_report_csv(
 
     # Write data
     for att in attendances:
-        employee = db.query(Employee).filter(Employee.id == att.employee_id).first()
+        employee = att.employee  # Already loaded via eager loading
         hours = calculate_hours(att.timestamp_in, att.timestamp_out) if att.timestamp_out else ""
 
         writer.writerow([

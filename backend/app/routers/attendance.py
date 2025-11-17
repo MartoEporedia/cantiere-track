@@ -1,13 +1,14 @@
 """
 Attendance tracking router
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from typing import Optional
 from datetime import datetime, date
 from ..core.database import get_db
-from ..core.dependencies import get_current_active_user
+from ..core.dependencies import get_current_active_user, require_manager_or_admin, require_admin
+from ..core.audit import log_action, AuditAction
 from ..models.attendance import Attendance
 from ..models.employee import Employee
 from ..models.site import Site
@@ -30,11 +31,12 @@ def calculate_hours(timestamp_in: datetime, timestamp_out: Optional[datetime]) -
 
 @router.post("/clock-in", response_model=AttendanceSchema, status_code=status.HTTP_201_CREATED)
 async def clock_in(
+    request: Request,
     clock_in_data: AttendanceClockIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Clock in an employee at a construction site"""
+    """Clock in an employee at a construction site (Requires MANAGER or ADMIN role)"""
     # Verify employee exists
     employee = db.query(Employee).filter(Employee.id == clock_in_data.employee_id).first()
     if not employee:
@@ -76,6 +78,23 @@ async def clock_in(
     db.commit()
     db.refresh(attendance)
 
+    # Log clock-in
+    log_action(
+        db=db,
+        action=AuditAction.CLOCK_IN,
+        user=current_user,
+        resource_type="attendance",
+        resource_id=attendance.id,
+        details={
+            "employee_id": employee.id,
+            "employee_name": f"{employee.name} {employee.surname}",
+            "site_id": site.id,
+            "site_name": site.name,
+            "timestamp": attendance.timestamp_in.isoformat()
+        },
+        request=request
+    )
+
     return attendance
 
 
@@ -83,10 +102,11 @@ async def clock_in(
 async def clock_out(
     attendance_id: int,
     clock_out_data: AttendanceClockOut,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Clock out an employee"""
+    """Clock out an employee (Requires MANAGER or ADMIN role)"""
     attendance = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not attendance:
         raise HTTPException(
@@ -108,16 +128,36 @@ async def clock_out(
     db.commit()
     db.refresh(attendance)
 
+    # Calculate hours worked
+    hours = calculate_hours(attendance.timestamp_in, attendance.timestamp_out)
+
+    # Log clock-out
+    log_action(
+        db=db,
+        action=AuditAction.CLOCK_OUT,
+        user=current_user,
+        resource_type="attendance",
+        resource_id=attendance.id,
+        details={
+            "employee_id": attendance.employee_id,
+            "site_id": attendance.site_id,
+            "timestamp_out": attendance.timestamp_out.isoformat(),
+            "hours_worked": hours
+        },
+        request=request
+    )
+
     return attendance
 
 
 @router.post("/", response_model=AttendanceSchema, status_code=status.HTTP_201_CREATED)
 async def create_attendance(
+    request: Request,
     attendance_data: AttendanceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Create an attendance record manually (with both in and out times)"""
+    """Create an attendance record manually (Requires MANAGER or ADMIN role)"""
     # Verify employee exists
     employee = db.query(Employee).filter(Employee.id == attendance_data.employee_id).first()
     if not employee:
@@ -139,6 +179,26 @@ async def create_attendance(
     db.add(attendance)
     db.commit()
     db.refresh(attendance)
+
+    # Calculate hours if both timestamps present
+    hours = calculate_hours(attendance.timestamp_in, attendance.timestamp_out) if attendance.timestamp_out else None
+
+    # Log manual attendance creation
+    log_action(
+        db=db,
+        action=AuditAction.ADD_MANUAL_HOURS,
+        user=current_user,
+        resource_type="attendance",
+        resource_id=attendance.id,
+        details={
+            "employee_id": attendance.employee_id,
+            "site_id": attendance.site_id,
+            "timestamp_in": attendance.timestamp_in.isoformat(),
+            "timestamp_out": attendance.timestamp_out.isoformat() if attendance.timestamp_out else None,
+            "hours_worked": hours
+        },
+        request=request
+    )
 
     return attendance
 
@@ -196,10 +256,11 @@ async def get_attendance(
 async def update_attendance(
     attendance_id: int,
     attendance_data: AttendanceUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Update attendance record"""
+    """Update attendance record (Requires MANAGER or ADMIN role)"""
     attendance = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not attendance:
         raise HTTPException(
@@ -209,11 +270,29 @@ async def update_attendance(
 
     # Update fields
     update_data = attendance_data.model_dump(exclude_unset=True)
+    old_values = {}
     for field, value in update_data.items():
+        old_values[field] = str(getattr(attendance, field)) if getattr(attendance, field) else None
         setattr(attendance, field, value)
 
     db.commit()
     db.refresh(attendance)
+
+    # Log update
+    log_action(
+        db=db,
+        action=AuditAction.UPDATE_ATTENDANCE,
+        user=current_user,
+        resource_type="attendance",
+        resource_id=attendance.id,
+        details={
+            "employee_id": attendance.employee_id,
+            "site_id": attendance.site_id,
+            "updated_fields": list(update_data.keys()),
+            "old_values": old_values
+        },
+        request=request
+    )
 
     return attendance
 
@@ -221,10 +300,11 @@ async def update_attendance(
 @router.delete("/{attendance_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_attendance(
     attendance_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin)
 ):
-    """Delete attendance record"""
+    """Delete attendance record (Requires ADMIN role)"""
     attendance = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not attendance:
         raise HTTPException(
@@ -232,8 +312,28 @@ async def delete_attendance(
             detail="Attendance record not found"
         )
 
+    # Store data for audit log before deletion
+    attendance_data = {
+        "employee_id": attendance.employee_id,
+        "site_id": attendance.site_id,
+        "timestamp_in": attendance.timestamp_in.isoformat(),
+        "timestamp_out": attendance.timestamp_out.isoformat() if attendance.timestamp_out else None,
+        "hours_worked": calculate_hours(attendance.timestamp_in, attendance.timestamp_out)
+    }
+
     db.delete(attendance)
     db.commit()
+
+    # Log deletion
+    log_action(
+        db=db,
+        action=AuditAction.DELETE_ATTENDANCE,
+        user=current_user,
+        resource_type="attendance",
+        resource_id=attendance_id,
+        details=attendance_data,
+        request=request
+    )
 
     return None
 
