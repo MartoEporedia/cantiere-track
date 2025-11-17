@@ -1,11 +1,12 @@
 """
 Employee management router
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from ..core.database import get_db
-from ..core.dependencies import get_current_active_user
+from ..core.dependencies import get_current_active_user, require_manager_or_admin, require_admin
+from ..core.audit import log_action, AuditAction
 from ..models.employee import Employee
 from ..models.user import User
 from ..schemas.employee import EmployeeCreate, EmployeeUpdate, Employee as EmployeeSchema, EmployeeList
@@ -15,11 +16,12 @@ router = APIRouter()
 
 @router.post("/", response_model=EmployeeSchema, status_code=status.HTTP_201_CREATED)
 async def create_employee(
+    request: Request,
     employee_data: EmployeeCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Create a new employee"""
+    """Create a new employee (Requires MANAGER or ADMIN role)"""
     # Check if badge code already exists
     existing = db.query(Employee).filter(Employee.badge_code == employee_data.badge_code).first()
     if existing:
@@ -33,6 +35,22 @@ async def create_employee(
     db.add(db_employee)
     db.commit()
     db.refresh(db_employee)
+
+    # Log creation
+    log_action(
+        db=db,
+        action=AuditAction.CREATE_EMPLOYEE,
+        user=current_user,
+        resource_type="employee",
+        resource_id=db_employee.id,
+        details={
+            "name": db_employee.name,
+            "surname": db_employee.surname,
+            "badge_code": db_employee.badge_code,
+            "role": db_employee.role
+        },
+        request=request
+    )
 
     return db_employee
 
@@ -88,10 +106,11 @@ async def get_employee(
 async def update_employee(
     employee_id: int,
     employee_data: EmployeeUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_manager_or_admin)
 ):
-    """Update employee"""
+    """Update employee (Requires MANAGER or ADMIN role)"""
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
         raise HTTPException(
@@ -110,11 +129,28 @@ async def update_employee(
 
     # Update fields
     update_data = employee_data.model_dump(exclude_unset=True)
+    old_values = {}
     for field, value in update_data.items():
+        old_values[field] = getattr(employee, field)
         setattr(employee, field, value)
 
     db.commit()
     db.refresh(employee)
+
+    # Log update
+    log_action(
+        db=db,
+        action=AuditAction.UPDATE_EMPLOYEE,
+        user=current_user,
+        resource_type="employee",
+        resource_id=employee.id,
+        details={
+            "updated_fields": list(update_data.keys()),
+            "old_values": old_values,
+            "new_values": update_data
+        },
+        request=request
+    )
 
     return employee
 
@@ -122,10 +158,11 @@ async def update_employee(
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_employee(
     employee_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_admin)
 ):
-    """Delete employee"""
+    """Delete employee (Requires ADMIN role)"""
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
         raise HTTPException(
@@ -133,7 +170,26 @@ async def delete_employee(
             detail="Employee not found"
         )
 
+    # Store data for audit log before deletion
+    employee_data = {
+        "name": employee.name,
+        "surname": employee.surname,
+        "badge_code": employee.badge_code,
+        "role": employee.role
+    }
+
     db.delete(employee)
     db.commit()
+
+    # Log deletion
+    log_action(
+        db=db,
+        action=AuditAction.DELETE_EMPLOYEE,
+        user=current_user,
+        resource_type="employee",
+        resource_id=employee_id,
+        details=employee_data,
+        request=request
+    )
 
     return None
